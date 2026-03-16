@@ -3,6 +3,15 @@ import { walletClient } from './api';
 import { P2PMonitor } from './monitor';
 import { TelegramBot } from './bot';
 import { formatChangeBatch } from './formatter';
+import { P2PItem } from './types';
+
+function filterByPayments(items: P2PItem[], pairKey: string): P2PItem[] {
+  const allowedMethods = config.filterPayments.get(pairKey);
+  if (!allowedMethods) return items;
+  return items.filter((item) =>
+    item.payments.some((p) => allowedMethods.includes(p.toLowerCase()))
+  );
+}
 
 const monitor = new P2PMonitor();
 const bot = new TelegramBot(monitor);
@@ -20,19 +29,27 @@ async function poll() {
         pair.fiatCurrency
       );
 
+      const pairKey = `${pair.cryptoCurrency}-${pair.fiatCurrency}`;
+      const filteredBuy = filterByPayments(buyItems, pairKey);
+      const filteredSell = filterByPayments(sellItems, pairKey);
+
       const pairStr = `${pair.cryptoCurrency}/${pair.fiatCurrency}`;
+      const hasFilter = config.filterPayments.has(pairKey);
+      const filterNote = hasFilter
+        ? ` (filtered: ${filteredBuy.length}/${buyItems.length} buy, ${filteredSell.length}/${sellItems.length} sell)`
+        : '';
       console.log(
-        `📊 ${pairStr} — BUY: ${buyItems.length} offers, SELL: ${sellItems.length} offers`
+        `📊 ${pairStr} — BUY: ${buyItems.length} offers, SELL: ${sellItems.length} offers${filterNote}`
       );
 
       const buyChanges = monitor.processItems(
-        buyItems,
+        filteredBuy,
         pair.cryptoCurrency,
         pair.fiatCurrency,
         'BUY'
       );
       const sellChanges = monitor.processItems(
-        sellItems,
+        filteredSell,
         pair.cryptoCurrency,
         pair.fiatCurrency,
         'SELL'
@@ -75,6 +92,13 @@ async function poll() {
         }
       }
 
+      if (config.filterPayments.size > 0) {
+        summaryLines.push('🔍 <b>Фильтры оплаты:</b>');
+        for (const [pair, methods] of config.filterPayments) {
+          summaryLines.push(`   ${pair}: ${methods.join(', ')}`);
+        }
+        summaryLines.push('');
+      }
       summaryLines.push('💡 Теперь вы будете получать уведомления об изменениях.');
 
       await bot.notify(summaryLines.join('\n'));
@@ -128,6 +152,11 @@ async function main() {
   console.log('═'.repeat(40));
   console.log(`  Pairs: ${config.pairs.map((p) => `${p.cryptoCurrency}/${p.fiatCurrency}`).join(', ')}`);
   console.log(`  Poll interval: ${config.pollInterval}s`);
+  if (config.filterPayments.size > 0) {
+    for (const [pair, methods] of config.filterPayments) {
+      console.log(`  Payment filter [${pair}]: ${methods.join(', ')}`);
+    }
+  }
   console.log('═'.repeat(40));
 
   // Start bot
