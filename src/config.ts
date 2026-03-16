@@ -22,7 +22,34 @@ export const config = {
   notifyRemoved: (process.env.NOTIFY_REMOVED || 'true').toLowerCase() !== 'false',
   notifyNewTopOnly: parseInt(process.env.NOTIFY_NEW_TOP_ONLY || '0', 10),
   priceChangeThreshold: parseFloat(process.env.PRICE_CHANGE_THRESHOLD || '0.5'),
+  filterPayments: parsePaymentFilters(process.env.FILTER_PAYMENTS || ''),
 };
+
+function parsePaymentFilters(raw: string): Map<string, string[]> {
+  const result = new Map<string, string[]>();
+  if (!raw.trim()) return result;
+
+  for (const segment of raw.split(';')) {
+    const trimmed = segment.trim();
+    if (!trimmed) continue;
+
+    const colonIdx = trimmed.indexOf(':');
+    if (colonIdx === -1) continue;
+
+    const pair = trimmed.slice(0, colonIdx).trim().toUpperCase();
+    const methods = trimmed
+      .slice(colonIdx + 1)
+      .split(',')
+      .map((m) => m.trim().toLowerCase())
+      .filter(Boolean);
+
+    if (pair && methods.length > 0) {
+      result.set(pair, methods);
+    }
+  }
+
+  return result;
+}
 
 function parsePairs(raw: string): MonitorPair[] {
   return raw.split(',').map((p) => {

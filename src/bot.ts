@@ -64,6 +64,7 @@ export class TelegramBot {
           '📋 <b>Команды:</b>',
           '/status — Обзор текущего рынка',
           '/snapshot — Подробный снапшот всех пар',
+          '/payments — Доступные методы оплаты',
           '/chatid — Показать ваш Chat ID',
           '/pairs — Показать отслеживаемые пары',
           '/settings — Настройки уведомлений',
@@ -200,6 +201,48 @@ export class TelegramBot {
       });
     });
 
+    this.bot.command('payments', async (ctx) => {
+      const lines: string[] = ['💳 <b>Методы оплаты в текущих офферах:</b>', ''];
+
+      let hasData = false;
+      for (const pair of config.pairs) {
+        const pairKey = `${pair.cryptoCurrency}-${pair.fiatCurrency}`;
+        const pairStr = `${pair.cryptoCurrency}/${pair.fiatCurrency}`;
+        const pairPayments = new Map<string, number>();
+
+        for (const side of ['BUY', 'SELL'] as const) {
+          const snapshot = this.monitor.getSnapshot(pair.cryptoCurrency, pair.fiatCurrency, side);
+          for (const tracked of snapshot) {
+            for (const p of tracked.item.payments) {
+              pairPayments.set(p, (pairPayments.get(p) || 0) + 1);
+            }
+          }
+        }
+
+        if (pairPayments.size === 0) continue;
+        hasData = true;
+
+        const sorted = [...pairPayments.entries()].sort((a, b) => b[1] - a[1]);
+        lines.push(`📊 <b>${pairStr}</b>`);
+        for (const [name, count] of sorted) {
+          lines.push(`  • <code>${name}</code> — ${count} офферов`);
+        }
+
+        const filter = config.filterPayments.get(pairKey);
+        if (filter) {
+          lines.push(`  🔍 Фильтр: ${filter.join(', ')}`);
+        }
+        lines.push('');
+      }
+
+      if (!hasData) {
+        ctx.replyWithHTML('📭 Нет данных. Дождитесь первого цикла опроса.');
+        return;
+      }
+
+      ctx.replyWithHTML(lines.join('\n'));
+    });
+
     this.bot.command('help', (ctx) => {
       ctx.replyWithHTML(
         [
@@ -217,6 +260,7 @@ export class TelegramBot {
           '',
           '/status — быстрый обзор (мин/макс/средн цена)',
           '/snapshot — подробный снапшот с топ предложениями',
+          '/payments — все методы оплаты в текущих офферах',
           '/settings — настройки фильтрации уведомлений',
         ].join('\n')
       );
