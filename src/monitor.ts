@@ -132,9 +132,9 @@ export class P2PMonitor {
 
     return {
       count: items.length,
-      minPrice: Math.min(...prices).toFixed(2),
-      maxPrice: Math.max(...prices).toFixed(2),
-      avgPrice: (prices.reduce((a, b) => a + b, 0) / prices.length).toFixed(2),
+      minPrice: Math.min(...prices).toFixed(3),
+      maxPrice: Math.max(...prices).toFixed(3),
+      avgPrice: (prices.reduce((a, b) => a + b, 0) / prices.length).toFixed(3),
       totalVolume: volumes.reduce((a, b) => a + b, 0).toFixed(2),
     };
   }

@@ -39,6 +39,8 @@ export interface P2PResponse {
 export interface MonitorPair {
   cryptoCurrency: string;
   fiatCurrency: string;
+  sides: ('BUY' | 'SELL')[];
+  enabled: boolean;
 }
 
 export interface TrackedItem {

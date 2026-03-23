@@ -17,11 +17,13 @@ export const config = {
   botToken: required('BOT_TOKEN'),
   chatId: required('CHAT_ID'),
   walletApiKey: required('WALLET_API_KEY'),
-  pollInterval: parseInt(process.env.POLL_INTERVAL || '30', 10),
-  pairs: parsePairs(process.env.MONITOR_PAIRS || 'USDT-GEL,USDT-USD'),
-  notifyRemoved: (process.env.NOTIFY_REMOVED || 'true').toLowerCase() !== 'false',
-  notifyNewTopOnly: parseInt(process.env.NOTIFY_NEW_TOP_ONLY || '0', 10),
+  pollInterval: parseInt(process.env.POLL_INTERVAL || '60', 10),
+  pairs: parsePairs(process.env.MONITOR_PAIRS || 'USDT-GEL,USDT-USD,USDT-RUB:SELL'),
+  notifyRemoved: (process.env.NOTIFY_REMOVED || 'false').toLowerCase() !== 'false',
+  notifyNewTopOnly: parseInt(process.env.NOTIFY_NEW_TOP_ONLY || '5', 10),
   priceChangeThreshold: parseFloat(process.env.PRICE_CHANGE_THRESHOLD || '0.5'),
+  requestDelay: parseInt(process.env.REQUEST_DELAY || '3000', 10),
+  maxPages: parseInt(process.env.MAX_PAGES || '3', 10),
   filterPayments: parsePaymentFilters(process.env.FILTER_PAYMENTS || ''),
 };
 
@@ -53,11 +55,26 @@ function parsePaymentFilters(raw: string): Map<string, string[]> {
 
 function parsePairs(raw: string): MonitorPair[] {
   return raw.split(',').map((p) => {
-    const [crypto, fiat] = p.trim().split('-');
+    const trimmed = p.trim();
+    const [pairPart, sidesPart] = trimmed.split(':');
+    const [crypto, fiat] = pairPart.split('-');
     if (!crypto || !fiat) {
-      console.error(`❌ Invalid pair format: "${p}". Use CRYPTO-FIAT (e.g. USDT-GEL)`);
+      console.error(`❌ Invalid pair format: "${p}". Use CRYPTO-FIAT or CRYPTO-FIAT:SELL (e.g. USDT-GEL, USDT-RUB:SELL)`);
       process.exit(1);
     }
-    return { cryptoCurrency: crypto, fiatCurrency: fiat };
+
+    let sides: ('BUY' | 'SELL')[] = ['BUY', 'SELL'];
+    if (sidesPart) {
+      sides = sidesPart
+        .toUpperCase()
+        .split('+')
+        .filter((s): s is 'BUY' | 'SELL' => s === 'BUY' || s === 'SELL');
+      if (sides.length === 0) {
+        console.error(`❌ Invalid sides in pair "${p}". Use BUY, SELL or BUY+SELL`);
+        process.exit(1);
+      }
+    }
+
+    return { cryptoCurrency: crypto, fiatCurrency: fiat, sides, enabled: true };
   });
 }
