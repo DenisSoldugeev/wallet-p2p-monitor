@@ -22,40 +22,38 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 async function poll() {
   const allChanges: import('./types').ItemChange[] = [];
 
-  for (const pair of config.pairs) {
+  const activePairs = config.pairs.filter((p) => p.enabled);
+
+  for (const pair of activePairs) {
     try {
-      const { buyItems, sellItems } = await walletClient.getAll(
-        pair.cryptoCurrency,
-        pair.fiatCurrency
-      );
-
       const pairKey = `${pair.cryptoCurrency}-${pair.fiatCurrency}`;
-      const filteredBuy = filterByPayments(buyItems, pairKey);
-      const filteredSell = filterByPayments(sellItems, pairKey);
-
       const pairStr = `${pair.cryptoCurrency}/${pair.fiatCurrency}`;
       const hasFilter = config.filterPayments.has(pairKey);
-      const filterNote = hasFilter
-        ? ` (filtered: ${filteredBuy.length}/${buyItems.length} buy, ${filteredSell.length}/${sellItems.length} sell)`
-        : '';
-      console.log(
-        `📊 ${pairStr} — BUY: ${buyItems.length} offers, SELL: ${sellItems.length} offers${filterNote}`
-      );
+      const logParts: string[] = [];
 
-      const buyChanges = monitor.processItems(
-        filteredBuy,
-        pair.cryptoCurrency,
-        pair.fiatCurrency,
-        'BUY'
-      );
-      const sellChanges = monitor.processItems(
-        filteredSell,
-        pair.cryptoCurrency,
-        pair.fiatCurrency,
-        'SELL'
-      );
+      for (const side of pair.sides) {
+        const { items, success } = await walletClient.getOnlineItems(
+          pair.cryptoCurrency,
+          pair.fiatCurrency,
+          side
+        );
 
-      allChanges.push(...buyChanges, ...sellChanges);
+        const filtered = filterByPayments(items, pairKey);
+        const filterNote = hasFilter ? ` (filtered: ${filtered.length}/${items.length})` : '';
+        logParts.push(`${side}: ${items.length} offers${success ? '' : ' ⚠️'}${filterNote}`);
+
+        if (success) {
+          const changes = monitor.processItems(
+            filtered,
+            pair.cryptoCurrency,
+            pair.fiatCurrency,
+            side
+          );
+          allChanges.push(...changes);
+        }
+      }
+
+      console.log(`📊 ${pairStr} — ${logParts.join(', ')}`);
     } catch (err) {
       console.error(`❌ Error polling ${pair.cryptoCurrency}/${pair.fiatCurrency}:`, err);
     }
@@ -73,9 +71,9 @@ async function poll() {
         '',
       ];
 
-      for (const pair of config.pairs) {
+      for (const pair of activePairs) {
         const pairStr = `${pair.cryptoCurrency}/${pair.fiatCurrency}`;
-        for (const side of ['BUY', 'SELL'] as const) {
+        for (const side of pair.sides) {
           const stats = monitor.getStats(pair.cryptoCurrency, pair.fiatCurrency, side);
           const sideEmoji = side === 'BUY' ? '🟢' : '🔴';
           const sideLabel = side === 'BUY' ? 'Покупка' : 'Продажа';
@@ -150,13 +148,15 @@ async function main() {
   console.log('═'.repeat(40));
   console.log('  🔍 Wallet P2P Monitor');
   console.log('═'.repeat(40));
-  console.log(`  Pairs: ${config.pairs.map((p) => `${p.cryptoCurrency}/${p.fiatCurrency}`).join(', ')}`);
+  console.log(`  Pairs: ${config.pairs.map((p) => `${p.cryptoCurrency}/${p.fiatCurrency}:${p.sides.join('+')}${p.enabled ? '' : ' (disabled)'}`).join(', ')}`);
   console.log(`  Poll interval: ${config.pollInterval}s`);
   if (config.filterPayments.size > 0) {
     for (const [pair, methods] of config.filterPayments) {
       console.log(`  Payment filter [${pair}]: ${methods.join(', ')}`);
     }
   }
+  console.log(`  Request delay: ${config.requestDelay}ms`);
+  console.log(`  Max pages: ${config.maxPages} (${config.maxPages * 50} offers max)`);
   console.log('═'.repeat(40));
 
   // Start bot
@@ -165,8 +165,14 @@ async function main() {
   // Initial poll
   await poll();
 
-  // Schedule recurring polls
-  pollTimer = setInterval(poll, config.pollInterval * 1000);
+  // Schedule recurring polls — wait for previous poll to finish before scheduling next
+  function scheduleNext() {
+    pollTimer = setTimeout(async () => {
+      await poll();
+      scheduleNext();
+    }, config.pollInterval * 1000);
+  }
+  scheduleNext();
 
   console.log('✅ Monitoring started. Press Ctrl+C to stop.');
 }
@@ -174,7 +180,7 @@ async function main() {
 // Graceful shutdown
 function shutdown(signal: string) {
   console.log(`\n⛔ ${signal} received. Shutting down...`);
-  if (pollTimer) clearInterval(pollTimer);
+  if (pollTimer) clearTimeout(pollTimer);
   bot.stop();
   process.exit(0);
 }

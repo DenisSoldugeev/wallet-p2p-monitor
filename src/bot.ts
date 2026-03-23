@@ -32,15 +32,21 @@ function settingsKeyboard(): InlineKeyboard {
 }
 
 function navKeyboard(type: 'stat' | 'snap', crypto: string, fiat: string, side: 'BUY' | 'SELL'): InlineKeyboard {
+  const pair = config.pairs.find(
+    (p) => p.cryptoCurrency === crypto && p.fiatCurrency === fiat
+  );
   const oppSide = side === 'BUY' ? 'SELL' : 'BUY';
-  const oppEmoji = oppSide === 'BUY' ? '🟢' : '🔴';
-  const oppLabel = oppSide === 'BUY' ? 'Покупка' : 'Продажа';
-  return [
-    [
-      { text: `${oppEmoji} ${oppLabel}`, callback_data: `${type}_flip:${crypto}:${fiat}:${oppSide}` },
-      { text: '📋 Другая пара', callback_data: `${type}_pick` },
-    ],
-  ];
+  const hasBothSides = pair ? pair.sides.includes(oppSide) : true;
+
+  const row: { text: string; callback_data: string }[] = [];
+  if (hasBothSides) {
+    const oppEmoji = oppSide === 'BUY' ? '🟢' : '🔴';
+    const oppLabel = oppSide === 'BUY' ? 'Покупка' : 'Продажа';
+    row.push({ text: `${oppEmoji} ${oppLabel}`, callback_data: `${type}_flip:${crypto}:${fiat}:${oppSide}` });
+  }
+  row.push({ text: '📋 Другая пара', callback_data: `${type}_pick` });
+
+  return [row];
 }
 
 export class TelegramBot {
@@ -71,7 +77,7 @@ export class TelegramBot {
           '/help — Помощь',
           '',
           `⏱ Интервал опроса: ${config.pollInterval} сек`,
-          `📊 Пары: ${config.pairs.map((p) => `${p.cryptoCurrency}/${p.fiatCurrency}`).join(', ')}`,
+          `📊 Пары: ${config.pairs.map((p) => `${p.cryptoCurrency}/${p.fiatCurrency}:${p.sides.join('+')}`).join(', ')}`,
         ].join('\n')
       );
     });
@@ -81,19 +87,63 @@ export class TelegramBot {
     });
 
     this.bot.command('pairs', (ctx) => {
-      const pairsText = config.pairs
-        .map((p) => `• ${p.cryptoCurrency}/${p.fiatCurrency}`)
-        .join('\n');
-      ctx.replyWithHTML(`📊 <b>Отслеживаемые пары:</b>\n\n${pairsText}`);
+      const lines: string[] = ['📊 <b>Отслеживаемые пары:</b>', ''];
+      for (const p of config.pairs) {
+        const status = p.enabled ? '✅' : '❌';
+        const sidesStr = p.sides.join('+');
+        lines.push(`${status} ${p.cryptoCurrency}/${p.fiatCurrency} · ${sidesStr}`);
+      }
+      const buttons = config.pairs.map((p, i) => {
+        const label = p.enabled
+          ? `❌ Выкл ${p.cryptoCurrency}/${p.fiatCurrency}`
+          : `✅ Вкл ${p.cryptoCurrency}/${p.fiatCurrency}`;
+        return [{ text: label, callback_data: `pair_toggle:${i}` }];
+      });
+      ctx.replyWithHTML(lines.join('\n'), {
+        reply_markup: { inline_keyboard: buttons },
+      });
+    });
+
+    this.bot.action(/^pair_toggle:(\d+)$/, async (ctx) => {
+      const idx = parseInt(ctx.match![1], 10);
+      if (idx < 0 || idx >= config.pairs.length) {
+        await ctx.answerCbQuery('Пара не найдена');
+        return;
+      }
+      const pair = config.pairs[idx];
+      pair.enabled = !pair.enabled;
+      const statusLabel = pair.enabled ? 'включена' : 'выключена';
+      await ctx.answerCbQuery(`${pair.cryptoCurrency}/${pair.fiatCurrency} ${statusLabel}`);
+
+      const lines: string[] = ['📊 <b>Отслеживаемые пары:</b>', ''];
+      for (const p of config.pairs) {
+        const status = p.enabled ? '✅' : '❌';
+        const sidesStr = p.sides.join('+');
+        lines.push(`${status} ${p.cryptoCurrency}/${p.fiatCurrency} · ${sidesStr}`);
+      }
+      const buttons = config.pairs.map((p, i) => {
+        const label = p.enabled
+          ? `❌ Выкл ${p.cryptoCurrency}/${p.fiatCurrency}`
+          : `✅ Вкл ${p.cryptoCurrency}/${p.fiatCurrency}`;
+        return [{ text: label, callback_data: `pair_toggle:${i}` }];
+      });
+      await ctx.editMessageText(lines.join('\n'), {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: buttons },
+      });
     });
 
     this.bot.command('status', (ctx) => {
-      const buttons = config.pairs.map((p) => {
+      const buttons = config.pairs.filter((p) => p.enabled).flatMap((p) => {
         const pairStr = `${p.cryptoCurrency}/${p.fiatCurrency}`;
-        return [
-          { text: `🟢 ${pairStr} Покупка`, callback_data: `stat:${p.cryptoCurrency}:${p.fiatCurrency}:BUY` },
-          { text: `🔴 ${pairStr} Продажа`, callback_data: `stat:${p.cryptoCurrency}:${p.fiatCurrency}:SELL` },
-        ];
+        const row: { text: string; callback_data: string }[] = [];
+        if (p.sides.includes('BUY')) {
+          row.push({ text: `🟢 ${pairStr} Покупка`, callback_data: `stat:${p.cryptoCurrency}:${p.fiatCurrency}:BUY` });
+        }
+        if (p.sides.includes('SELL')) {
+          row.push({ text: `🔴 ${pairStr} Продажа`, callback_data: `stat:${p.cryptoCurrency}:${p.fiatCurrency}:SELL` });
+        }
+        return [row];
       });
       ctx.reply('📊 Выберите пару и сторону:', {
         reply_markup: { inline_keyboard: buttons },
@@ -108,12 +158,16 @@ export class TelegramBot {
     });
 
     this.bot.command('snapshot', (ctx) => {
-      const buttons = config.pairs.map((p) => {
+      const buttons = config.pairs.filter((p) => p.enabled).flatMap((p) => {
         const pairStr = `${p.cryptoCurrency}/${p.fiatCurrency}`;
-        return [
-          { text: `🟢 ${pairStr} Покупка`, callback_data: `snap:${p.cryptoCurrency}:${p.fiatCurrency}:BUY` },
-          { text: `🔴 ${pairStr} Продажа`, callback_data: `snap:${p.cryptoCurrency}:${p.fiatCurrency}:SELL` },
-        ];
+        const row: { text: string; callback_data: string }[] = [];
+        if (p.sides.includes('BUY')) {
+          row.push({ text: `🟢 ${pairStr} Покупка`, callback_data: `snap:${p.cryptoCurrency}:${p.fiatCurrency}:BUY` });
+        }
+        if (p.sides.includes('SELL')) {
+          row.push({ text: `🔴 ${pairStr} Продажа`, callback_data: `snap:${p.cryptoCurrency}:${p.fiatCurrency}:SELL` });
+        }
+        return [row];
       });
       ctx.reply('📋 Выберите пару и сторону:', {
         reply_markup: { inline_keyboard: buttons },
@@ -148,12 +202,16 @@ export class TelegramBot {
     // Pick another pair
     this.bot.action(/^stat_pick$/, async (ctx) => {
       await ctx.answerCbQuery();
-      const buttons = config.pairs.map((p) => {
+      const buttons = config.pairs.filter((p) => p.enabled).flatMap((p) => {
         const pairStr = `${p.cryptoCurrency}/${p.fiatCurrency}`;
-        return [
-          { text: `🟢 ${pairStr} Покупка`, callback_data: `stat:${p.cryptoCurrency}:${p.fiatCurrency}:BUY` },
-          { text: `🔴 ${pairStr} Продажа`, callback_data: `stat:${p.cryptoCurrency}:${p.fiatCurrency}:SELL` },
-        ];
+        const row: { text: string; callback_data: string }[] = [];
+        if (p.sides.includes('BUY')) {
+          row.push({ text: `🟢 ${pairStr} Покупка`, callback_data: `stat:${p.cryptoCurrency}:${p.fiatCurrency}:BUY` });
+        }
+        if (p.sides.includes('SELL')) {
+          row.push({ text: `🔴 ${pairStr} Продажа`, callback_data: `stat:${p.cryptoCurrency}:${p.fiatCurrency}:SELL` });
+        }
+        return [row];
       });
       await ctx.editMessageText('📊 Выберите пару и сторону:', {
         reply_markup: { inline_keyboard: buttons },
@@ -162,12 +220,16 @@ export class TelegramBot {
 
     this.bot.action(/^snap_pick$/, async (ctx) => {
       await ctx.answerCbQuery();
-      const buttons = config.pairs.map((p) => {
+      const buttons = config.pairs.filter((p) => p.enabled).flatMap((p) => {
         const pairStr = `${p.cryptoCurrency}/${p.fiatCurrency}`;
-        return [
-          { text: `🟢 ${pairStr} Покупка`, callback_data: `snap:${p.cryptoCurrency}:${p.fiatCurrency}:BUY` },
-          { text: `🔴 ${pairStr} Продажа`, callback_data: `snap:${p.cryptoCurrency}:${p.fiatCurrency}:SELL` },
-        ];
+        const row: { text: string; callback_data: string }[] = [];
+        if (p.sides.includes('BUY')) {
+          row.push({ text: `🟢 ${pairStr} Покупка`, callback_data: `snap:${p.cryptoCurrency}:${p.fiatCurrency}:BUY` });
+        }
+        if (p.sides.includes('SELL')) {
+          row.push({ text: `🔴 ${pairStr} Продажа`, callback_data: `snap:${p.cryptoCurrency}:${p.fiatCurrency}:SELL` });
+        }
+        return [row];
       });
       await ctx.editMessageText('📋 Выберите пару и сторону:', {
         reply_markup: { inline_keyboard: buttons },
@@ -205,12 +267,12 @@ export class TelegramBot {
       const lines: string[] = ['💳 <b>Методы оплаты в текущих офферах:</b>', ''];
 
       let hasData = false;
-      for (const pair of config.pairs) {
+      for (const pair of config.pairs.filter((p) => p.enabled)) {
         const pairKey = `${pair.cryptoCurrency}-${pair.fiatCurrency}`;
         const pairStr = `${pair.cryptoCurrency}/${pair.fiatCurrency}`;
         const pairPayments = new Map<string, number>();
 
-        for (const side of ['BUY', 'SELL'] as const) {
+        for (const side of pair.sides) {
           const snapshot = this.monitor.getSnapshot(pair.cryptoCurrency, pair.fiatCurrency, side);
           for (const tracked of snapshot) {
             for (const p of tracked.item.payments) {
@@ -297,7 +359,7 @@ export class TelegramBot {
   private async sendPairSnapshot(ctx: Context, crypto: string, fiat: string, side: 'BUY' | 'SELL') {
     const loading = await ctx.replyWithHTML('⏳ Генерация снапшота...');
     try {
-      const items = await walletClient.getOnlineItems(crypto, fiat, side);
+      const { items } = await walletClient.getOnlineItems(crypto, fiat, side);
       const stats = this.monitor.getStats(crypto, fiat, side);
       const pairStr = `${crypto}/${fiat}`;
       const msg = formatSnapshot(pairStr, side, items, stats);

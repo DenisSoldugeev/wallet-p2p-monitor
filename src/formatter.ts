@@ -30,7 +30,7 @@ const MERCHANT_BADGE: Record<string, string> = {
 };
 
 function formatPrice(price: string, fiat: string): string {
-  return `<b>${parseFloat(price).toFixed(2)}</b> ${fiat}`;
+  return `<b>${parseFloat(price).toFixed(3)}</b> ${fiat}`;
 }
 
 function formatQuantity(qty: string, crypto: string): string {
@@ -118,6 +118,27 @@ export function formatChange(change: ItemChange): string {
 }
 
 /**
+ * Compact single-line format for batched notifications
+ */
+function formatChangeCompact(change: ItemChange): string {
+  const emoji = CHANGE_EMOJI[change.type];
+  const { item } = change;
+  const badge = item.merchantLevel === 'MERCHANT' || item.merchantLevel === 'TOP_MERCHANT' ? '🏪' : '👤';
+  const online = item.isOnline ? '🟢' : '⚫';
+  const price = `${parseFloat(item.price).toFixed(3)} ${item.fiatCurrency}`;
+
+  let priceInfo = price;
+  if ((change.type === 'PRICE_UP' || change.type === 'PRICE_DOWN') && change.previousPrice) {
+    const oldP = parseFloat(change.previousPrice);
+    const newP = parseFloat(item.price);
+    const pct = oldP > 0 ? (((newP - oldP) / oldP) * 100).toFixed(1) : '0';
+    priceInfo = `${parseFloat(change.previousPrice).toFixed(3)} → ${price} (${newP > oldP ? '+' : ''}${pct}%)`;
+  }
+
+  return `${emoji} ${badge} ${online} <b>${escapeHtml(item.nickname)}</b> · ${priceInfo}`;
+}
+
+/**
  * Format a batch of changes into grouped messages.
  * Groups by pair to avoid message spam.
  */
@@ -157,7 +178,7 @@ export function formatChangeBatch(changes: ItemChange[]): string[] {
 
     const summary: string[] = [];
     if (newCount) summary.push(`✨ ${newCount} новых`);
-    if (priceCount) summary.push(`📊 ${priceCount} цена`);
+    if (priceCount) summary.push(`📊 ${priceCount} обновлений цен`);
     if (volCount) summary.push(`📦 ${volCount} объём`);
     if (removedCount) summary.push(`🗑 ${removedCount} снято`);
     lines.push(summary.join(' · '));
@@ -165,7 +186,7 @@ export function formatChangeBatch(changes: ItemChange[]): string[] {
 
     for (const change of groupChanges) {
       lines.push('');
-      lines.push(formatChange(change));
+      lines.push(formatChangeCompact(change));
     }
 
     messages.push(lines.join('\n'));
